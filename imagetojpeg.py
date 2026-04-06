@@ -5,7 +5,6 @@ import zipfile
 import shutil
 import datetime
 import pytz
-from io import BytesIO
 
 # Page configuration
 st.set_page_config(
@@ -15,35 +14,23 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Custom CSS for better styling
+# Custom CSS
 st.markdown("""
     <style>
     .main {
         padding: 2rem 1rem;
     }
-
     .stTitle {
         text-align: center;
         font-size: 2.5rem !important;
         margin-bottom: 0.5rem !important;
     }
-
     .subtitle {
         text-align: center;
         color: #666;
         font-size: 1rem;
         margin-bottom: 2rem;
     }
-
-    .success-box {
-        padding: 1rem;
-        background-color: #d4edda;
-        border: 1px solid #c3e6cb;
-        border-radius: 0.5rem;
-        color: #155724;
-        margin-bottom: 0.5rem;
-    }
-
     .info-box {
         padding: 1rem;
         background-color: #e2e3e5;
@@ -52,7 +39,6 @@ st.markdown("""
         color: #383d41;
         text-align: center;
     }
-
     .stats-container {
         display: flex;
         justify-content: center;
@@ -61,20 +47,17 @@ st.markdown("""
         text-align: center;
         flex-wrap: wrap;
     }
-
     .stat-item {
         padding: 1rem;
         background-color: #f8f9fa;
         border-radius: 0.5rem;
         min-width: 120px;
     }
-
     .stat-number {
         font-size: 1.8rem;
         font-weight: bold;
         color: #0066cc;
     }
-
     .stat-label {
         font-size: 0.85rem;
         color: #666;
@@ -83,7 +66,6 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Title and subtitle
 st.markdown("# 🖼️ Image to JPG Converter")
 st.markdown("""
     <div class="subtitle">
@@ -91,17 +73,13 @@ st.markdown("""
     </div>
 """, unsafe_allow_html=True)
 
-# Set timezone to CST/CDT based on America/Chicago
 cst_timezone = pytz.timezone("America/Chicago")
 current_time_cst = datetime.datetime.now(cst_timezone)
 
-# Output folder setup
 output_folder = "converted_files"
 zip_filename = "converted_images.zip"
 
-# Clean up previous session files
 def cleanup_files():
-    """Clean up any existing converted files from previous sessions."""
     if os.path.exists(output_folder):
         shutil.rmtree(output_folder)
     if os.path.exists(zip_filename):
@@ -110,34 +88,56 @@ def cleanup_files():
 def convert_image_to_jpg(uploaded_file, output_path):
     """
     Convert an uploaded image file to JPG.
-    Handles transparency for PNG, WEBP, GIF, and palette-based images.
+    PNG files are always placed on a white background before conversion.
+    Transparency in WEBP, GIF, and other alpha-capable formats is also handled.
     """
     with Image.open(uploaded_file) as img:
-        # Normalize WEBP and other formats that may contain transparency
-        if img.format == "WEBP":
-            img = img.convert("RGBA")
+        image_format = (img.format or "").upper()
+        image_mode = img.mode
 
-        # Handle images with transparency or palette mode
-        if img.mode in ("RGBA", "LA", "P"):
-            if img.mode == "P":
+        # PNG: always flatten onto white background before converting to JPEG
+        if image_format == "PNG":
+            if img.mode != "RGBA":
                 img = img.convert("RGBA")
 
-            background = Image.new("RGB", img.size, (255, 255, 255))
-            alpha = img.split()[-1] if img.mode in ("RGBA", "LA") else None
-            background.paste(img, mask=alpha)
-            img = background
+            white_bg = Image.new("RGB", img.size, (255, 255, 255))
+            white_bg.paste(img, mask=img.getchannel("A"))
+            img = white_bg
+
+        # WEBP: normalize first, then flatten if transparency exists
+        elif image_format == "WEBP":
+            if img.mode in ("RGBA", "LA", "P"):
+                if img.mode == "P":
+                    img = img.convert("RGBA")
+                elif img.mode == "LA":
+                    img = img.convert("RGBA")
+
+                white_bg = Image.new("RGB", img.size, (255, 255, 255))
+                white_bg.paste(img, mask=img.getchannel("A"))
+                img = white_bg
+            else:
+                img = img.convert("RGB")
+
+        # GIF / transparent images / palette images
+        elif image_mode in ("RGBA", "LA", "P"):
+            if img.mode == "P":
+                img = img.convert("RGBA")
+            elif img.mode == "LA":
+                img = img.convert("RGBA")
+
+            if "A" in img.getbands():
+                white_bg = Image.new("RGB", img.size, (255, 255, 255))
+                white_bg.paste(img, mask=img.getchannel("A"))
+                img = white_bg
+            else:
+                img = img.convert("RGB")
+
+        # Everything else
         else:
             img = img.convert("RGB")
 
         img.save(output_path, "JPEG", quality=95, optimize=True)
 
-# Initialize session state
-if "conversion_complete" not in st.session_state:
-    st.session_state.conversion_complete = False
-    st.session_state.converted_count = 0
-    st.session_state.error_messages = []
-
-# File uploader
 st.markdown("### 📁 Select Images to Convert")
 uploaded_files = st.file_uploader(
     "Choose image files (JPG, JPEG, PNG, BMP, GIF, WEBP)",
@@ -147,13 +147,9 @@ uploaded_files = st.file_uploader(
 )
 
 if uploaded_files:
-    # Clean up before starting new conversion
     cleanup_files()
-
-    # Create output directory
     os.makedirs(output_folder, exist_ok=True)
 
-    # Track results
     successful_conversions = []
     failed_conversions = []
 
@@ -161,18 +157,15 @@ if uploaded_files:
     progress_bar = st.progress(0)
     status_text = st.empty()
 
-    # Process each uploaded file
     for idx, uploaded_file in enumerate(uploaded_files):
         try:
             progress = (idx + 1) / len(uploaded_files)
             progress_bar.progress(progress)
             status_text.text(f"Processing: {uploaded_file.name}")
 
-            # Prevent filename collisions
             base_name = os.path.splitext(uploaded_file.name)[0]
             output_filename = f"{base_name}.jpg"
 
-            # If duplicate output name exists, append an index
             existing_names = set(successful_conversions)
             if output_filename in existing_names:
                 output_filename = f"{base_name}_{idx + 1}.jpg"
@@ -185,11 +178,9 @@ if uploaded_files:
         except Exception as e:
             failed_conversions.append((uploaded_file.name, str(e)))
 
-    # Clear progress indicators
     progress_bar.empty()
     status_text.empty()
 
-    # Display results
     if successful_conversions:
         st.markdown("### ✅ Conversion Results")
 
@@ -215,7 +206,6 @@ if uploaded_files:
                 for filename, error in failed_conversions:
                     st.error(f"**{filename}**: {error}")
 
-        # Create zip file of successful conversions
         try:
             with zipfile.ZipFile(zip_filename, "w", zipfile.ZIP_DEFLATED) as zipf:
                 for root, _, files in os.walk(output_folder):
@@ -232,7 +222,6 @@ if uploaded_files:
                     use_container_width=True
                 )
 
-            # Offer individual downloads if only a few files
             if len(successful_conversions) <= 5:
                 st.markdown("**Or download individually:**")
                 cols = st.columns(3)
@@ -263,18 +252,19 @@ else:
     st.markdown("""
     ### 💡 How It Works
     1. Click "Browse files" above
-    2. Select one or more image files (JPG, JPEG, PNG, BMP, GIF, or WEBP)
-    3. Your images will be converted to JPG format
-    4. Download the converted files as a ZIP or individually
+    2. Select one or more image files
+    3. PNG files are placed on a white background before conversion
+    4. All files are converted to JPG format
+    5. Download the converted files as a ZIP or individually
 
     ### ℹ️ Details
-    - **Quality**: Saved at 95% JPEG quality for good file size and clarity
-    - **Transparency**: PNG, GIF, and WEBP images with transparency are placed on a white background
+    - **PNG Handling**: PNG files are flattened onto a white background before conversion
+    - **Transparency**: WEBP, GIF, and other transparent images are also placed on white
     - **Supported Input Formats**: JPG, JPEG, PNG, BMP, GIF, WEBP
     - **Output Format**: JPEG (.jpg)
+    - **Quality**: Saved at 95% JPEG quality
     """)
 
-# Footer with timestamp
 st.markdown("---")
 st.markdown(f"""
     <div style="text-align: center; color: #999; font-size: 0.85rem;">
