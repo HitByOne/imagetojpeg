@@ -90,6 +90,7 @@ def convert_image_to_jpg(uploaded_file, output_path):
     Convert an uploaded image file to JPG.
     PNG files are always placed on a white background before conversion.
     Transparency in WEBP, GIF, and other alpha-capable formats is also handled.
+    TIF/TIFF files are supported, including multi-page (only first page is converted).
     """
     with Image.open(uploaded_file) as img:
         image_format = (img.format or "").upper()
@@ -118,6 +119,35 @@ def convert_image_to_jpg(uploaded_file, output_path):
             else:
                 img = img.convert("RGB")
 
+        # TIFF: handle multi-page (use first frame), high bit-depth, and transparency
+        elif image_format in ("TIFF", "TIF"):
+            # Seek to first frame if multi-page
+            try:
+                img.seek(0)
+            except EOFError:
+                pass
+
+            # Handle high bit-depth (e.g. 16-bit grayscale or RGB)
+            if img.mode in ("I", "I;16", "I;16B", "F"):
+                import numpy as np
+                arr = np.array(img, dtype=np.float32)
+                arr = ((arr - arr.min()) / (arr.max() - arr.min() + 1e-8) * 255).astype(np.uint8)
+                img = Image.fromarray(arr).convert("RGB")
+            elif img.mode in ("RGBA", "LA", "P"):
+                if img.mode == "P":
+                    img = img.convert("RGBA")
+                elif img.mode == "LA":
+                    img = img.convert("RGBA")
+
+                if "A" in img.getbands():
+                    white_bg = Image.new("RGB", img.size, (255, 255, 255))
+                    white_bg.paste(img, mask=img.getchannel("A"))
+                    img = white_bg
+                else:
+                    img = img.convert("RGB")
+            else:
+                img = img.convert("RGB")
+
         # GIF / transparent images / palette images
         elif image_mode in ("RGBA", "LA", "P"):
             if img.mode == "P":
@@ -140,8 +170,8 @@ def convert_image_to_jpg(uploaded_file, output_path):
 
 st.markdown("### 📁 Select Images to Convert")
 uploaded_files = st.file_uploader(
-    "Choose image files (JPG, JPEG, PNG, BMP, GIF, WEBP)",
-    type=["jpg", "jpeg", "png", "bmp", "gif", "webp"],
+    "Choose image files (JPG, JPEG, PNG, BMP, GIF, WEBP, TIF, TIFF)",
+    type=["jpg", "jpeg", "png", "bmp", "gif", "webp", "tif", "tiff"],
     accept_multiple_files=True,
     help="Select one or more image files to convert to JPG format"
 )
@@ -260,7 +290,8 @@ else:
     ### ℹ️ Details
     - **PNG Handling**: PNG files are flattened onto a white background before conversion
     - **Transparency**: WEBP, GIF, and other transparent images are also placed on white
-    - **Supported Input Formats**: JPG, JPEG, PNG, BMP, GIF, WEBP
+    - **TIF/TIFF Handling**: Multi-page TIFFs convert the first page; high bit-depth (16-bit) images are normalized to 8-bit
+    - **Supported Input Formats**: JPG, JPEG, PNG, BMP, GIF, WEBP, TIF, TIFF
     - **Output Format**: JPEG (.jpg)
     - **Quality**: Saved at 95% JPEG quality
     """)
